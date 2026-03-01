@@ -10,7 +10,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: integration-service/serving-cert
-    controller-gen.kubebuilder.io/version: v0.16.1
+    controller-gen.kubebuilder.io/version: v0.17.2
   name: componentgroups.appstudio.redhat.com
 spec:
   group: appstudio.redhat.com
@@ -64,33 +64,27 @@ spec:
                   description: ComponentReference references a Component and its specific
                     branch/version
                   properties:
-                    componentBranch:
+                    componentVersion:
                       description: |-
-                        ComponentBranch references the ComponentBranch for this Component.
-                        The ComponentBranch CRD will be implemented by the build team as part of STONEBLD-3604.
+                        ComponentVersion references the ComponentVersion for this Component.
+                        The ComponentVersion CRD will be implemented by the build team as part of STONEBLD-3604.
                         For now, this contains the branch name and GCL (Global Candidate List) information.
                       properties:
-                        lastBuildTime:
+                        context:
                           description: |-
-                            LastBuildTime is the timestamp when the last build was completed.
-                            Format: RFC3339 (e.g., "2025-08-13T12:00:00Z")
-                          format: date-time
-                          type: string
-                        lastPromotedCommit:
-                          description: |-
-                            LastPromotedCommit is the git commit SHA of the last promoted image.
-                            Example: 6a7c81802e785aa869f82301afe61f4e9775772b
-                          type: string
-                        lastPromotedImage:
-                          description: |-
-                            LastPromotedImage is the latest "good" container image for this ComponentBranch.
-                            This is part of the Global Candidate List (GCL) tracking.
-                            Example: quay.io/sampleorg/first-component@sha256:1b29...
+                            Name of the context directory for the component version. Used
+                            with Revision
                           type: string
                         name:
                           description: |-
-                            Name is the name of the ComponentBranch (typically the branch name like "main", "v1", etc.)
-                            This will reference the ComponentBranch CRD once it's implemented.
+                            Name is the name of the ComponentVersion (typically the branch name like "main", "v1", etc.)
+                            This will reference the ComponentVersion CRD once it's implemented.
+                          type: string
+                        version:
+                          description: |-
+                            Name of the git revision for the component version. Used as a
+                            fallback if the `appstudio.openshift.io/version` label is not
+                            set on the build PLR
                           type: string
                       required:
                       - name
@@ -100,7 +94,7 @@ spec:
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                   required:
-                  - componentBranch
+                  - componentVersion
                   - name
                   type: object
                 type: array
@@ -237,6 +231,39 @@ spec:
                   - type
                   type: object
                 type: array
+              globalCandidateList:
+                description: |-
+                  The list of recently promoted Components which the integration service
+                  uses to create Snapshots
+                items:
+                  properties:
+                    lastPromotedBuildTime:
+                      description: |-
+                        Timestamp for build of the LastPromotedImage.  Used to prevent
+                        regressions resulting from race conditions
+                        Format: RFC3339 (e.g., "2025-08-13T12:00:00Z")
+                      format: date-time
+                      type: string
+                    lastPromotedCommit:
+                      description: Git commit associated with the build of LastPromotedImage
+                      type: string
+                    lastPromotedImage:
+                      description: |-
+                        Location of the last image for this Component to be promoted. If no
+                        image has been promoted then the field will be blank
+                      type: string
+                    name:
+                      description: Name of the Component
+                      type: string
+                    version:
+                      description: |-
+                        Version of the Component. Only required if multiple version of the same
+                        Component are in the ComponentGroup
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
             required:
             - conditions
             type: object
@@ -251,7 +278,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: integration-service/serving-cert
-    controller-gen.kubebuilder.io/version: v0.16.1
+    controller-gen.kubebuilder.io/version: v0.17.2
     service.beta.openshift.io/inject-cabundle: "true"
   name: integrationtestscenarios.appstudio.redhat.com
 spec:
@@ -341,7 +368,7 @@ spec:
                       Component/Application GitOps repository resources.
                     properties:
                       env:
-                        description: Env is an array of standard environment variables
+                        description: An array of standard environment variables
                         items:
                           description: EnvVarPair describes environment variables
                             to use for the component
@@ -542,7 +569,7 @@ spec:
                       Component/Application GitOps repository resources.
                     properties:
                       env:
-                        description: Env is an array of standard environment variables
+                        description: An array of standard environment variables
                         items:
                           description: EnvVarPair describes environment variables
                             to use for the component
@@ -715,6 +742,9 @@ spec:
     - jsonPath: .spec.application
       name: Application
       type: string
+    - jsonPath: .spec.componentGroup
+      name: ComponentGroup
+      type: string
     name: v1beta2
     schema:
       openAPIV3Schema:
@@ -740,11 +770,25 @@ spec:
           metadata:
             type: object
           spec:
-            description: IntegrationTestScenarioSpec defines the desired state of
-              IntegrationScenario
+            description: |-
+              IntegrationTestScenarioSpec defines the desired state of IntegrationScenario
+              Exactly one of Application or ComponentGroup must be specified.
+            oneOf:
+            - required:
+              - application
+            - required:
+              - componentGroup
             properties:
               application:
-                description: Application that's associated with the IntegrationTestScenario
+                description: |-
+                  Application that's associated with the IntegrationTestScenario.
+                  Mutually exclusive with ComponentGroup - exactly one must be specified.
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              componentGroup:
+                description: |-
+                  ComponentGroup that's associated with the IntegrationTestScenario.
+                  Mutually exclusive with Application - exactly one must be specified.
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               contexts:
@@ -827,7 +871,6 @@ spec:
                 - resolver
                 type: object
             required:
-            - application
             - resolverRef
             type: object
           status:
@@ -1131,8 +1174,19 @@ rules:
   - appstudio.redhat.com
   resources:
   - applications/status
+  - componentgroups/status
   verbs:
   - get
+- apiGroups:
+  - appstudio.redhat.com
+  resources:
+  - componentgroups
+  - environments
+  - releaseplans
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - appstudio.redhat.com
   resources:
@@ -1156,15 +1210,6 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - appstudio.redhat.com
-  resources:
-  - environments
-  - releaseplans
-  verbs:
-  - get
-  - list
-  - watch
 - apiGroups:
   - pipelinesascode.tekton.dev
   resources:
@@ -1517,7 +1562,7 @@ spec:
         - --leader-elector-retry-period=5s
         command:
         - /manager
-        image: quay.io/konflux-ci/integration-service:8e8e1e4587970c1a453613fccdc89da66005f4af
+        image: quay.io/konflux-ci/integration-service:5a5e1b2ab06b0f86ffbae2875b916c0df1c8f9fa
         livenessProbe:
           httpGet:
             path: /healthz
@@ -1578,7 +1623,7 @@ spec:
             - --zap-log-level=debug
             - --pr-snapshots-to-keep=70
             - --non-pr-snapshots-to-keep=640
-            image: quay.io/konflux-ci/integration-service:8e8e1e4587970c1a453613fccdc89da66005f4af
+            image: quay.io/konflux-ci/integration-service:5a5e1b2ab06b0f86ffbae2875b916c0df1c8f9fa
             imagePullPolicy: Always
             name: test-gc
             resources:
